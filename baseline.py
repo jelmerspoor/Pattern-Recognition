@@ -1,6 +1,10 @@
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+import matplotlib.pyplot as plt
+from sklearn.metrics import ConfusionMatrixDisplay
 
 # A very basic convolutional neural network
 class CNN2D(nn.Module):
@@ -65,6 +69,11 @@ val_loader = DataLoader(
     shuffle=False
 )
 
+train_losses = []
+val_losses = []
+val_map3_scores = []
+best_map3 = float("-inf")
+
 # Training and validation functions
 for epoch in range(num_epochs):
 
@@ -103,7 +112,8 @@ for epoch in range(num_epochs):
     running_val_loss = 0.0
     correct = 0
     map3_sum = 0.0
-
+    val_true = []
+    val_pred = []
 
     # Disable gradient calculations during validation
     with torch.no_grad():
@@ -121,6 +131,9 @@ for epoch in range(num_epochs):
 
             # Calculate accuracy
             predictions = logits.argmax(dim=1)
+            val_true.extend(labels.tolist())
+            val_pred.extend(predictions.tolist())
+
             correct += (predictions == labels).sum().item()
 
             # Get the three highest scoring predictions
@@ -135,6 +148,16 @@ for epoch in range(num_epochs):
     val_accuracy = correct / len(val_loader.dataset)
     map3 = map3_sum / len(val_loader.dataset)
 
+    train_losses.append(train_loss)
+    val_losses.append(val_loss)
+    val_map3_scores.append(map3)
+
+    if map3 > best_map3:
+        best_map3 = map3
+        best_epoch = epoch + 1
+        best_val_true = val_true
+        best_val_pred = val_pred
+
     # Print the results of the current epoch
     print(
         f"Epoch {epoch + 1}/{num_epochs} | "
@@ -143,6 +166,47 @@ for epoch in range(num_epochs):
         f"Val accuracy: {val_accuracy:.4f} | "
         f"MAP@3: {map3:.4f}"
     )
+
+epochs = range(1, num_epochs + 1)
+results_dir = Path("results")
+results_dir.mkdir(exist_ok=True)
+
+fig, ax = plt.subplots()
+ax.plot(epochs, train_losses, marker="o", label="Training")
+ax.plot(epochs, val_losses, marker="o", label="Validation")
+ax.set(xlabel="Epoch", ylabel="Loss", title="Training and validation loss")
+ax.set_xticks(epochs)
+ax.legend()
+fig.tight_layout()
+fig.savefig(results_dir / "loss_per_epoch.png", dpi=200)
+plt.close(fig)
+
+fig, ax = plt.subplots()
+ax.plot(epochs, val_map3_scores, marker="o")
+ax.set(xlabel="Epoch", ylabel="MAP@3", title="Validation MAP@3")
+ax.set_xticks(epochs)
+fig.tight_layout()
+fig.savefig(results_dir / "map3_per_epoch.png", dpi=200)
+plt.close(fig)
+
+# Confusion matrix for the epoch with the highest validation MAP@3.
+fig, ax = plt.subplots(figsize=(14, 12))
+
+ConfusionMatrixDisplay.from_predictions(
+    best_val_true,
+    best_val_pred,
+    labels=list(range(num_classes)),
+    include_values=False,
+    cmap="Blues",
+    ax=ax,
+)
+
+ax.set_title(f"Validation confusion matrix (epoch {best_epoch}, MAP@3 {best_map3:.4f})")
+ax.set_xlabel("Predicted Class")
+ax.set_ylabel("True Class")
+fig.tight_layout()
+fig.savefig(results_dir / "confusion_matrix.png", dpi=200)
+plt.close(fig)
 
 # Save the trained model
 torch.save(model.state_dict(), "cnn_baseline.pth")
